@@ -7,7 +7,10 @@ FROM base AS deps
 WORKDIR /repo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/tsconfig/package.json packages/tsconfig/
+COPY packages/tsconfig/base.json packages/tsconfig/
 COPY packages/api-contracts/package.json packages/api-contracts/
+COPY packages/api-contracts/tsconfig.json packages/api-contracts/
+COPY packages/api-contracts/src packages/api-contracts/src
 COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile
 

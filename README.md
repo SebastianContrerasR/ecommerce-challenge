@@ -200,7 +200,7 @@ pnpm dev:api     # Fastify with tsx watch on :3000
 pnpm dev:web     # Vite dev server on :5173
 ```
 
-`prisma:generate` accepts a dummy `DATABASE_URL` for codegen; `prisma:deploy` and the integration tests need a reachable one. If host port 5432 is taken, run Compose with `POSTGRES_HOST_PORT=5433` and point local `DATABASE_URL` at `localhost:5433`.
+`pnpm install` also builds `@ecommerce/api-contracts` via a `postinstall` step, since the API and web typecheck and build against its `dist` output. `prisma:generate` accepts a dummy `DATABASE_URL` for codegen; `prisma:deploy` and the integration tests need a reachable one. If host port 5432 is taken, run Compose with `POSTGRES_HOST_PORT=5433` and point local `DATABASE_URL` at `localhost:5433`.
 
 ## 12. Running with Docker Compose
 
