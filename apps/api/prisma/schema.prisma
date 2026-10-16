@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Product {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @db.Text
+  sku         String    @unique @db.Text
+  description String    @default("") @db.Text
+  category    String    @db.Text
+  price       Decimal   @db.Decimal(12, 2)
+  stock       Int       @default(0)
+  weightKg    Decimal   @map("weight_kg") @db.Decimal(10, 3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz
+  orderItems  OrderItem[]
+
+  @@map("products")
+  @@index([archivedAt])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model Order {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status           String      @default("PAID") @db.Text
+  paymentStatus    String      @map("payment_status") @default("SUCCEEDED") @db.Text
+  paymentReference String      @unique @map("payment_reference") @db.Text
+  total            Decimal     @db.Decimal(12, 2)
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  items            OrderItem[]
+
+  @@map("orders")
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId    String   @map("order_id") @db.Uuid
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId  String   @map("product_id") @db.Uuid
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  productSku String   @map("product_sku") @db.Text
+  productName String  @map("product_name") @db.Text
+  unitPrice  Decimal  @map("unit_price") @db.Decimal(12, 2)
+  quantity   Int
+  lineTotal  Decimal  @map("line_total") @db.Decimal(12, 2)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("order_items")
+  @@index([orderId])
+  @@index([productId])
+}
+
+model IdempotencyKey {
+  key            String   @map("idempotency_key") @db.Text
+  requestHash    String   @map("request_hash") @db.Text
+  responseStatus Int      @map("response_status")
+  responseBody   Json     @map("response_body") @db.JsonB
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([key])
+  @@map("idempotency_keys")
+  @@index([createdAt])
+}

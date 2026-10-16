@@ -1,0 +1,5 @@
+name,sku,description,category,price,stock,weight_kg
+Fractional Stock,FS-001,Fractional stock,Sports,9.99,10.5,0.200
+Negative Stock,NS-002,Negative stock,Home & Office,45.50,-5,2.100
+Huge Stock,HS-003,Huge stock,Tools,6.99,99999999999,0.200
+Alpha Stock,AS-004,Alphabetic stock,Stationery,8.99,many,0.030

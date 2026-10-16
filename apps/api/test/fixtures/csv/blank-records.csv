@@ -1,0 +1,8 @@
+name,sku,description,category,price,stock,weight_kg
+
+Spaced Item,SP-001,Surrounded by blank lines,Footwear,49.99,200,0.300
+
+,,,,,,
+Second Item,SP-002,After a comma-only line,Footwear,59.99,45,2.800
+   
+Third Item,SP-003,After a whitespace line,Sports,12.99,400,0.400

@@ -1,0 +1,4 @@
+name,sku,description,category,price,stock,weight_kg
+First Copy,DF-001,First occurrence,Sports,19.99,600,0.400
+Second Copy, df-001 ,Second occurrence with different case and spaces,Sports,21.99,100,0.350
+Unique Item,UI-002,No conflict here,Books,13.99,200,0.600

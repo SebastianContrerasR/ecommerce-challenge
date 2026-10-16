@@ -1,0 +1,5 @@
+name,sku,description,category,price,stock,weight_kg
+,MR-001,Missing name,Footwear,10.00,5,0.200
+No Price,NP-002,No price value,Footwear,,5,0.200
+No Weight,NW-003,No weight value,Footwear,10.00,5,
+, , , , , ,

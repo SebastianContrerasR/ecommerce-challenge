@@ -1,0 +1,12 @@
+{
+  "name": "@ecommerce/tsconfig",
+  "private": true,
+  "version": "0.1.0",
+  "files": [
+    "base.json"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./package.json": "./package.json"
+  }
+}

@@ -1,0 +1,7 @@
+name,sku,description,category,price,stock,weight_kg
+Dollar Price,DP-001,Dollar sign price,Electronics,$29.99,75,0.120
+Free Price,FP-002,Word price,Books,free,80,0.600
+Precise Price,PP-003,Three decimal price,Kitchen,10.999,150,1.200
+Negative Price,NP-004,Negative price,Footwear,-5.00,40,0.420
+Precise Weight,PW-005,Four decimal weight,Sports,12.99,400,0.4000
+Negative Weight,NW-006,Negative weight,Outdoors,19.99,160,-0.08
