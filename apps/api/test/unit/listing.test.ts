@@ -23,6 +23,7 @@ describe("parseListQuery", () => {
       page: 1,
       pageSize: 20,
       includeArchived: false,
+      inStock: false,
     });
   });
 
@@ -43,12 +44,20 @@ describe("parseListQuery", () => {
       sort: "price",
       order: "asc",
       includeArchived: "true",
+      inStock: "true",
     });
     expect(parsed.page).toBe(2);
     expect(parsed.pageSize).toBe(5);
     expect(parsed.sort).toBe("price");
     expect(parsed.order).toBe("asc");
     expect(parsed.includeArchived).toBe(true);
+    expect(parsed.inStock).toBe(true);
+  });
+
+  it("treats inStock=false and blank flags as no stock restriction", () => {
+    expect(parseListQuery({ inStock: "false" }).inStock).toBe(false);
+    expect(parseListQuery({ inStock: "" }).inStock).toBe(false);
+    expect(parseListQuery({ includeArchived: "" }).includeArchived).toBe(false);
   });
 
   it("rejects unknown sort fields", () => {
@@ -67,5 +76,9 @@ describe("parseListQuery", () => {
 
   it("rejects unknown includeArchived values", () => {
     expectServiceErrorCode(() => parseListQuery({ includeArchived: "yes" }), "INVALID_QUERY");
+  });
+
+  it("rejects unknown inStock values", () => {
+    expectServiceErrorCode(() => parseListQuery({ inStock: "1" }), "INVALID_QUERY");
   });
 });

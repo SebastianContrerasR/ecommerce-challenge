@@ -300,6 +300,49 @@ describe("product catalog", () => {
     expect(withArchived.data.map((item) => item.sku).sort()).toEqual(["RS-040", "RS-041"]);
   });
 
+  it("hides out-of-stock products only when inStock is requested", async () => {
+    const stocked = await createViaApi(app, "ST-001");
+    const depleted = await createViaApi(app, "ST-002", { stock: 0 });
+
+    const unfiltered = (
+      await app.inject({ method: "GET", url: "/api/products" })
+    ).json() as ListJson;
+    expect(unfiltered.data.map((item) => item.sku).sort()).toEqual(["ST-001", "ST-002"]);
+    expect(unfiltered.pagination.totalItems).toBe(2);
+
+    const inStock = (
+      await app.inject({ method: "GET", url: "/api/products?inStock=true" })
+    ).json() as ListJson;
+    expect(inStock.data.map((item) => item.sku)).toEqual([stocked.sku]);
+    expect(inStock.pagination.totalItems).toBe(1);
+
+    const explicitFalse = (
+      await app.inject({ method: "GET", url: "/api/products?inStock=false" })
+    ).json() as ListJson;
+    expect(explicitFalse.pagination.totalItems).toBe(2);
+
+    const combined = (
+      await app.inject({
+        method: "GET",
+        url: "/api/products?inStock=true&includeArchived=true",
+      })
+    ).json() as ListJson;
+    expect(combined.data.map((item) => item.sku)).toEqual([stocked.sku]);
+
+    await app.inject({ method: "DELETE", url: `/api/products/${stocked.id}` });
+    const onlyArchivedLeft = (
+      await app.inject({ method: "GET", url: "/api/products?inStock=true" })
+    ).json() as ListJson;
+    expect(onlyArchivedLeft.data).toEqual([]);
+    expect(depleted.stock).toBe(0);
+  });
+
+  it("rejects an invalid inStock flag", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/products?inStock=maybe" });
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as ErrorJson).error.code).toBe("INVALID_QUERY");
+  });
+
   it("paginates with boundaries and rejects invalid sort parameters", async () => {
     for (let index = 1; index <= 25; index += 1) {
       const sku = `PG-${String(index).padStart(3, "0")}`;

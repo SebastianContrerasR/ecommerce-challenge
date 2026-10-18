@@ -97,6 +97,7 @@ export const ListProductsQuerySchema = Type.Object(
     page: Type.Optional(Type.String({ pattern: "^\\d+$", maxLength: 10 })),
     pageSize: Type.Optional(Type.String({ pattern: "^\\d+$", maxLength: 10 })),
     includeArchived: Type.Optional(Type.String({ maxLength: 5 })),
+    inStock: Type.Optional(Type.String({ maxLength: 5 })),
   },
   { additionalProperties: false },
 );

@@ -42,10 +42,11 @@ Frontend boundary:
 apps/web/src/routes.tsx
 apps/web/src/api/client.ts
 apps/web/src/api/*.ts
+apps/web/src/components/*.tsx (Page/PageHeader/EmptyState/SectionHeading, Modal, ProductFormModal, ImportModal, CartDrawer, ArchiveButton, icons)
 apps/web/src/pages/*.tsx
 ```
 
-`packages/api-contracts` is the single source of API schemas. Both `apps/api` and `apps/web` import from it. Never import Prisma, `Decimal`, or SQL into `packages/api-contracts`. Never import Prisma into `apps/web`. Money on the wire is a decimal `string`, never a binary float.
+`packages/api-contracts` is the single source of API schemas. Both `apps/api` and `apps/web` import from it. Never import Prisma or SQL into `packages/api-contracts`. Never import Prisma into `apps/web`. Money on the wire is a decimal `string`, never a binary float.
 
 ## Separation of concerns
 
@@ -55,7 +56,7 @@ Prefer pure functions for business rules and transformations (`modules/orders/to
 
 ## Money, database, and concurrency rules
 
-Use exact decimal semantics for prices and totals. Server-side monetary math uses `Decimal` / `decimal.js`, PostgreSQL `NUMERIC(12,2)`. Never use binary floating-point arithmetic for money. Serialize `Decimal` as `string` at the API boundary.
+Use exact decimal semantics for prices and totals, never binary floating-point arithmetic for money. PostgreSQL stores money as `NUMERIC(12,2)` (weights `NUMERIC(10,3)`), so the Prisma client returns `Decimal` and every mapper converts it at the API boundary with `toFixed(2)` / `toFixed(3)` (see `modules/products/mapper.ts`, `modules/orders/mapper.ts`). Hand-written business math converts those strings to integer cents as `bigint` (`modules/orders/totals.ts`: `priceStringToCents`, `formatCents`, `calculateOrderLines`) — the project deliberately ships no decimal library, because a fixed two-decimal currency does not need one. Reconsider that decision (and the recorded assumption) if multi-currency or FX rounding ever enters scope.
 
 Enforce critical invariants in the database, not only in application code: `price >= 0`, `stock >= 0`, `quantity > 0`, `UNIQUE(sku)`, `OrderItem.productId RESTRICT ON DELETE`, `OrderItem.orderId CASCADE ON DELETE`.
 
@@ -83,7 +84,7 @@ Map TypeBox failures to `400 VALIDATION_ERROR`. Use `404 PRODUCT_NOT_FOUND / ORD
 
 ## Dependencies and secrets
 
-Avoid unnecessary dependencies, abstractions, services, or infrastructure. Prefer the installed solution (`csv-parse`, `decimal.js`, Prisma) over a new library.
+Avoid unnecessary dependencies, abstractions, services, or infrastructure. Prefer the installed solution (`csv-parse`, Prisma, React, TanStack Query) over a new library; check `package.json` before naming a dependency as installed.
 
 Keep environment secrets out of source control. Maintain a complete `.env.example` with safe placeholders (`DATABASE_URL`, `PORT`, `VITE_API_URL`, `PAYMENT_MODE=fake`).
 
@@ -106,7 +107,7 @@ pnpm e2e
 docker compose up --build
 ```
 
-`apps/api` additionally supports `pnpm --filter api prisma:migrate`, `prisma:deploy`, `prisma:studio` as defined in its `package.json`. Do not rename these without updating `README.md` and this file.
+`apps/api` additionally supports `pnpm --filter api prisma:migrate`, `prisma:deploy`, `prisma:generate` as defined in its `package.json`. Do not rename these without updating `README.md` and this file.
 
 ## Local development workflow
 

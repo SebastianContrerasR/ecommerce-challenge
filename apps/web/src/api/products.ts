@@ -20,6 +20,7 @@ export interface ProductListParams {
   page?: number | undefined;
   pageSize?: number | undefined;
   includeArchived?: boolean | undefined;
+  inStock?: boolean | undefined;
 }
 
 export function buildProductListPath(params: ProductListParams): string {
@@ -44,6 +45,9 @@ export function buildProductListPath(params: ProductListParams): string {
   }
   if (params.includeArchived === true) {
     search.set("includeArchived", "true");
+  }
+  if (params.inStock === true) {
+    search.set("inStock", "true");
   }
   const query = search.toString();
   return query === "" ? "/api/products" : `/api/products?${query}`;

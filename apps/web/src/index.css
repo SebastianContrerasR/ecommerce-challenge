@@ -1,6 +1,121 @@
 @import "tailwindcss";
 
+html {
+  scrollbar-gutter: stable;
+}
+
 :focus-visible {
   outline: 2px solid #1d4ed8;
   outline-offset: 2px;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply bg-blue-700 text-white hover:bg-blue-800 disabled:bg-slate-200 disabled:text-slate-500;
+  }
+  .btn-secondary {
+    @apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:text-slate-400;
+  }
+  .btn-danger {
+    @apply bg-red-700 text-white hover:bg-red-800 disabled:bg-slate-200 disabled:text-slate-500;
+  }
+  .btn-ghost {
+    @apply text-blue-700 hover:underline disabled:text-slate-400;
+  }
+
+  .btn-label {
+    @apply hidden sm:inline;
+  }
+
+  .tooltip {
+    @apply invisible pointer-events-none absolute top-full left-1/2 z-10 mt-1 -translate-x-1/2 rounded bg-slate-900 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100;
+  }
+
+  .input {
+    @apply rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500;
+  }
+
+  .input[aria-invalid="true"] {
+    @apply border-red-400 focus:border-red-500;
+  }
+
+  .input-has-suffix {
+    @apply pr-12;
+  }
+
+  .input-suffix {
+    @apply pointer-events-none absolute inset-y-0 right-3 flex select-none items-center text-xs font-medium text-slate-500;
+  }
+
+  .card {
+    @apply rounded-lg border border-slate-200 bg-white shadow-xs;
+  }
+  .card-row {
+    @apply flex items-center justify-between gap-3 px-4 py-3;
+  }
+  .card-list {
+    @apply divide-y divide-slate-200 overflow-hidden;
+  }
+
+  .badge {
+    @apply inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-neutral {
+    @apply bg-slate-100 text-slate-700;
+  }
+  .badge-warning {
+    @apply bg-amber-100 text-amber-800;
+  }
+  .badge-success {
+    @apply bg-green-100 text-green-800;
+  }
+  .badge-danger {
+    @apply rounded bg-red-50 font-mono text-red-700;
+  }
+
+  .empty-state {
+    @apply flex flex-col items-center gap-3 px-6 py-12 text-center;
+  }
+  .empty-state-title {
+    @apply text-base font-semibold text-slate-900;
+  }
+  .empty-state-text {
+    @apply max-w-md text-sm text-slate-600;
+  }
+
+  .alert {
+    @apply rounded-lg border px-4 py-3 text-sm;
+  }
+  .alert-error {
+    @apply border-red-200 bg-red-50 text-red-800;
+  }
+  .alert-success {
+    @apply border-green-200 bg-green-50 text-green-800;
+  }
+
+  .definition-list {
+    @apply grid gap-3 text-sm sm:grid-cols-[7rem_1fr];
+  }
+
+  .drawer-panel {
+    animation: drawer-in 150ms ease-out;
+  }
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-panel {
+    animation: none;
+  }
 }

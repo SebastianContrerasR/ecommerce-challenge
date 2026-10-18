@@ -8,6 +8,9 @@ import type { Order } from "../api/orders.js";
 import { useCart } from "../cart/CartContext.js";
 import type { CartEntry } from "../cart/cart.js";
 import { estimateSubtotal, formatMoney } from "../format.js";
+import { CartIcon } from "./icons.js";
+import { Modal } from "./Modal.js";
+import { EmptyState } from "./Page.js";
 
 const LAST_ORDER_KEY = "ecommerce-last-order";
 
@@ -28,19 +31,28 @@ function CartLineRow({ entry }: { entry: CartEntry }) {
   const effectiveStock = live?.stock ?? entry.product.stock;
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-      <div>
-        <p className="font-medium">{live?.name ?? entry.product.name}</p>
-        <p className="text-xs text-slate-500">
+    <li className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
+      <div className="min-w-0">
+        <p className="font-medium text-slate-900">
+          <Link
+            to={`/products/${entry.product.id}`}
+            className="hover:text-blue-700 hover:underline"
+          >
+            {live?.name ?? entry.product.name}
+          </Link>
+        </p>
+        <p className="mt-0.5 text-xs text-slate-500">
           {live?.sku ?? entry.product.sku} · {formatMoney(live?.price ?? entry.product.price)} each
         </p>
         {detail.isError && (
-          <p role="alert" className="text-xs text-red-700">
+          <p role="alert" className="mt-1 text-xs text-red-700">
             Details unavailable.
           </p>
         )}
         {unavailable && (
-          <p className="text-xs font-medium text-amber-700">No longer available for purchase.</p>
+          <p className="mt-1 text-xs font-medium text-amber-700">
+            No longer available for purchase.
+          </p>
         )}
       </div>
       <div className="flex items-center gap-2">
@@ -58,13 +70,13 @@ function CartLineRow({ entry }: { entry: CartEntry }) {
             const next = Number.parseInt(event.target.value, 10);
             cart.setQuantity(entry.product.id, Number.isInteger(next) ? next : 1);
           }}
-          className="w-16 rounded border border-slate-300 px-2 py-1 text-sm"
+          className="input w-16"
         />
-        <span className="text-xs text-slate-500">of {effectiveStock} in stock</span>
+        <span className="w-24 text-xs text-slate-500">of {effectiveStock} in stock</span>
         <button
           type="button"
           onClick={() => cart.removeItem(entry.product.id)}
-          className="rounded border border-slate-300 px-2 py-1 text-sm"
+          className="btn btn-ghost"
         >
           Remove
         </button>
@@ -73,7 +85,11 @@ function CartLineRow({ entry }: { entry: CartEntry }) {
   );
 }
 
-export function CartPage() {
+interface CartDrawerProps {
+  onClose: () => void;
+}
+
+export function CartDrawer({ onClose }: CartDrawerProps) {
   const [apiBaseUrl] = useState<string>(() => getApiBaseUrl());
   const queryClient = useQueryClient();
   const cart = useCart();
@@ -121,46 +137,58 @@ export function CartPage() {
 
   if (order !== null) {
     return (
-      <section aria-label="Order confirmation">
-        <h2 className="text-xl font-semibold text-slate-900">Order confirmed</h2>
-        <p role="status" className="mt-2 text-sm text-green-700">
+      <Modal
+        title="Order confirmed"
+        description="Payment succeeded and stock has been updated."
+        onClose={onClose}
+        placement="right"
+        width="md"
+        closeLabel="Close cart"
+      >
+        <p role="status" className="alert alert-success">
           Payment succeeded. Order total {formatMoney(order.total)}.
         </p>
-        <dl className="mt-3 grid max-w-xl gap-2 text-sm">
-          <div className="flex gap-2">
-            <dt className="w-32 font-medium text-slate-600">Order id</dt>
-            <dd>{order.id}</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="w-32 font-medium text-slate-600">Reference</dt>
-            <dd>{order.paymentReference}</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="w-32 font-medium text-slate-600">Items</dt>
-            <dd>{order.items.length}</dd>
-          </div>
+        <dl className="definition-list mt-4">
+          <dt className="font-medium text-slate-600">Order id</dt>
+          <dd className="break-all">{order.id}</dd>
+          <dt className="font-medium text-slate-600">Reference</dt>
+          <dd>{order.paymentReference}</dd>
+          <dt className="font-medium text-slate-600">Items</dt>
+          <dd>{order.items.length}</dd>
         </dl>
-        <p className="mt-3 text-sm">
-          <Link to={`/orders/${order.id}`} className="text-blue-700 hover:underline">
-            View order details
-          </Link>
-        </p>
-      </section>
+        <Link to={`/orders/${order.id}`} onClick={onClose} className="btn btn-primary mt-6">
+          View order details
+        </Link>
+      </Modal>
     );
   }
 
   if (cart.entries.length === 0) {
     return (
-      <section aria-label="Shopping cart">
-        <h2 className="text-xl font-semibold text-slate-900">Shopping cart</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Your cart is empty.{" "}
-          <Link to="/" className="text-blue-700 hover:underline">
-            Browse the catalog
-          </Link>
-          .
-        </p>
-      </section>
+      <Modal
+        title="Shopping cart"
+        onClose={onClose}
+        placement="right"
+        width="md"
+        closeLabel="Close cart"
+      >
+        <EmptyState
+          title="Your cart is empty."
+          action={
+            <Link
+              to="/"
+              onClick={onClose}
+              aria-label="Browse the catalog"
+              className="btn btn-primary"
+            >
+              <CartIcon />
+              <span className="btn-label">Browse the catalog</span>
+            </Link>
+          }
+        >
+          Add products from the catalog to place an order.
+        </EmptyState>
+      </Modal>
     );
   }
 
@@ -169,47 +197,24 @@ export function CartPage() {
   );
 
   return (
-    <section aria-label="Shopping cart">
-      <h2 className="text-xl font-semibold text-slate-900">Shopping cart</h2>
-      <ul className="mt-3 max-w-2xl divide-y divide-slate-200 rounded border border-slate-200 bg-white text-sm">
-        {cart.entries.map((entry) => (
-          <CartLineRow key={entry.product.id} entry={entry} />
-        ))}
-      </ul>
-      <p className="mt-3 text-sm text-slate-700">
-        Estimated subtotal: <span className="font-semibold">{formatMoney(estimate)}</span>{" "}
-        <span className="text-slate-500">
-          (final total is calculated by the server at checkout)
-        </span>
-      </p>
-
-      <div className="mt-4 max-w-2xl rounded border border-slate-200 p-3">
-        <h3 className="text-sm font-semibold text-slate-900">Checkout</h3>
-        {checkoutError instanceof ApiError && checkoutError.code === "PAYMENT_DECLINED" && (
-          <p role="alert" className="mt-1 text-sm text-red-700">
-            Payment was declined. No order was created and stock is unchanged.
-          </p>
-        )}
-        {checkoutError instanceof ApiError && checkoutError.code === "INSUFFICIENT_STOCK" && (
-          <p role="alert" className="mt-1 text-sm text-red-700">
-            Some items are no longer in stock. Nothing was charged and no order was created.
-          </p>
-        )}
-        {checkoutError !== null &&
-          (!(checkoutError instanceof ApiError) ||
-            (checkoutError.code !== "PAYMENT_DECLINED" &&
-              checkoutError.code !== "INSUFFICIENT_STOCK")) && (
-            <p role="alert" className="mt-1 text-sm text-red-700">
-              Checkout failed{checkoutError instanceof ApiError ? ` (${checkoutError.code})` : ""}:{" "}
-              {checkoutError.message} Retrying reuses the same idempotency key.
-            </p>
-          )}
-        <div className="mt-2 flex gap-2">
+    <Modal
+      title="Shopping cart"
+      description="Stock is revalidated at checkout, and the final total is calculated by the server."
+      onClose={onClose}
+      placement="right"
+      width="md"
+      closeLabel="Close cart"
+      footer={
+        <>
+          <div className="mr-auto">
+            <p className="text-xs text-slate-500">Estimated total</p>
+            <p className="text-lg font-semibold text-slate-900">{formatMoney(estimate)}</p>
+          </div>
           <button
             type="button"
             disabled={checkout.isPending}
             onClick={() => checkout.mutate()}
-            className="rounded bg-blue-700 px-4 py-1.5 text-sm text-white disabled:opacity-50"
+            className="btn btn-primary"
           >
             {checkout.isPending
               ? "Processing…"
@@ -217,11 +222,34 @@ export function CartPage() {
                 ? "Retry checkout"
                 : "Place order"}
           </button>
-          <Link to="/" className="rounded border border-slate-300 px-4 py-1.5 text-sm">
-            Continue shopping
-          </Link>
-        </div>
-      </div>
-    </section>
+        </>
+      }
+    >
+      <ul className="-mx-5 -mt-4 divide-y divide-slate-200 text-sm">
+        {cart.entries.map((entry) => (
+          <CartLineRow key={entry.product.id} entry={entry} />
+        ))}
+      </ul>
+
+      {checkoutError instanceof ApiError && checkoutError.code === "PAYMENT_DECLINED" && (
+        <p role="alert" className="alert alert-error mt-4">
+          Payment was declined. No order was created and stock is unchanged.
+        </p>
+      )}
+      {checkoutError instanceof ApiError && checkoutError.code === "INSUFFICIENT_STOCK" && (
+        <p role="alert" className="alert alert-error mt-4">
+          Some items are no longer in stock. Nothing was charged and no order was created.
+        </p>
+      )}
+      {checkoutError !== null &&
+        (!(checkoutError instanceof ApiError) ||
+          (checkoutError.code !== "PAYMENT_DECLINED" &&
+            checkoutError.code !== "INSUFFICIENT_STOCK")) && (
+          <p role="alert" className="alert alert-error mt-4">
+            Checkout failed{checkoutError instanceof ApiError ? ` (${checkoutError.code})` : ""}:{" "}
+            {checkoutError.message} Retrying reuses the same idempotency key.
+          </p>
+        )}
+    </Modal>
   );
 }

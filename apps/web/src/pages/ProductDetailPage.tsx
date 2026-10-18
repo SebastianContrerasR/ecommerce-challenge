@@ -1,18 +1,21 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { ApiError, getApiBaseUrl } from "../api/client.js";
-import { archiveProduct, fetchProduct } from "../api/products.js";
-import { useCart } from "../cart/CartContext.js";
+import { fetchProduct } from "../api/products.js";
+import { ArchiveButton } from "../components/ArchiveButton.js";
+import { PencilIcon } from "../components/icons.js";
+import { Page, PageHeader } from "../components/Page.js";
+import { ProductFormModal } from "../components/ProductFormModal.js";
 import { formatMoney, formatWeight } from "../format.js";
+import { isUuid } from "../ids.js";
 
 export function ProductDetailPage() {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const [apiBaseUrl] = useState<string>(() => getApiBaseUrl());
-  const [quantity, setQuantity] = useState(1);
-  const [confirmingArchive, setConfirmingArchive] = useState(false);
-  const cart = useCart();
+  const [editing, setEditing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const detail = useQuery({
     queryKey: ["product", id],
@@ -20,185 +23,139 @@ export function ProductDetailPage() {
     enabled: id !== undefined && id !== "",
   });
 
-  const archive = useMutation({
-    mutationFn: () => archiveProduct(apiBaseUrl, id ?? ""),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["products"] });
-      void queryClient.invalidateQueries({ queryKey: ["product", id] });
-      setConfirmingArchive(false);
-    },
-  });
-
   if (id === undefined || id === "") {
-    return <p role="alert">Missing product id.</p>;
+    return (
+      <Page label="Product detail" width="wide">
+        <p role="alert">Missing product id.</p>
+      </Page>
+    );
+  }
+
+  if (!isUuid(id)) {
+    return <Navigate to="/" replace />;
   }
 
   if (detail.isPending) {
-    return <p role="status">Loading product…</p>;
+    return (
+      <Page label="Product detail" width="wide">
+        <p role="status" className="text-sm text-slate-600">
+          Loading product…
+        </p>
+      </Page>
+    );
   }
 
   if (detail.isError) {
     const code = detail.error instanceof ApiError ? detail.error.code : "REQUEST_FAILED";
     return (
-      <div role="alert">
-        <p>{code === "PRODUCT_NOT_FOUND" ? "Product not found." : "Product failed to load."}</p>
-        <p>
-          <Link to="/" className="text-blue-700 hover:underline">
+      <Page label="Product detail" width="wide">
+        <div role="alert">
+          <p>{code === "PRODUCT_NOT_FOUND" ? "Product not found." : "Product failed to load."}</p>
+          <Link to="/" className="btn btn-secondary mt-4">
             Back to catalog
           </Link>
-        </p>
-      </div>
+        </div>
+      </Page>
     );
   }
 
   const product = detail.data;
-  const unavailable = product.archivedAt !== null || product.stock <= 0;
+  const archived = product.archivedAt !== null;
 
   return (
-    <section aria-label="Product detail">
-      <p>
-        <Link to="/" className="text-sm text-blue-700 hover:underline">
-          ← Back to catalog
-        </Link>
-      </p>
-      <div className="mt-2 flex items-center gap-3">
-        <h2 className="text-xl font-semibold text-slate-900">{product.name}</h2>
-        {product.archivedAt !== null && (
-          <span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
-            Archived
-          </span>
-        )}
-        {product.archivedAt === null && product.stock <= 0 && (
-          <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-            Out of stock
-          </span>
-        )}
-      </div>
-      <dl className="mt-4 grid max-w-xl gap-2 text-sm">
-        <div className="flex gap-2">
-          <dt className="w-24 font-medium text-slate-600">SKU</dt>
-          <dd>{product.sku}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="w-24 font-medium text-slate-600">Category</dt>
-          <dd>{product.category}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="w-24 font-medium text-slate-600">Price</dt>
-          <dd>{formatMoney(product.price)}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="w-24 font-medium text-slate-600">Stock</dt>
-          <dd>{product.stock}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="w-24 font-medium text-slate-600">Weight</dt>
-          <dd>{formatWeight(product.weightKg)}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="w-24 font-medium text-slate-600">Description</dt>
-          <dd>{product.description === "" ? "No description." : product.description}</dd>
-        </div>
-      </dl>
-
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <label htmlFor="detail-quantity" className="text-sm font-medium text-slate-700">
-          Quantity
-        </label>
-        <input
-          id="detail-quantity"
-          type="number"
-          min={1}
-          max={Math.max(product.stock, 1)}
-          value={quantity}
-          disabled={unavailable}
-          onChange={(event) => {
-            const next = Number.parseInt(event.target.value, 10);
-            setQuantity(Number.isInteger(next) ? next : 1);
-          }}
-          className="w-20 rounded border border-slate-300 px-2 py-1 text-sm"
-        />
-        <button
-          type="button"
-          disabled={unavailable}
-          onClick={() =>
-            cart.addItem(
-              {
-                id: product.id,
-                name: product.name,
-                sku: product.sku,
-                price: product.price,
-                stock: product.stock,
-                archivedAt: product.archivedAt,
-              },
-              quantity,
-            )
-          }
-          className="rounded bg-blue-700 px-3 py-1 text-sm text-white disabled:bg-slate-300"
-        >
-          Add to cart
-        </button>
-        {product.archivedAt === null && (
-          <Link
-            to={`/products/${product.id}/edit`}
-            className="rounded border border-slate-300 px-3 py-1 text-sm"
-          >
-            Edit
-          </Link>
-        )}
-      </div>
-
-      <div className="mt-6 max-w-xl rounded border border-slate-200 p-3">
-        <h3 className="text-sm font-semibold text-slate-900">Manage product</h3>
-        {product.archivedAt === null ? (
-          confirmingArchive ? (
-            <div>
-              <p className="mt-1 text-sm">
-                Archive this product? It will leave the catalog but stay in order history.
-              </p>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  disabled={archive.isPending}
-                  onClick={() => archive.mutate()}
-                  className="rounded bg-red-700 px-3 py-1 text-sm text-white disabled:opacity-50"
-                >
-                  {archive.isPending ? "Archiving…" : "Confirm archive"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingArchive(false)}
-                  className="rounded border border-slate-300 px-3 py-1 text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
+    <Page label="Product detail" width="wide">
+      <Link to="/" className="text-sm text-blue-700 hover:underline">
+        ← Back to catalog
+      </Link>
+      <div className="mt-3">
+        <PageHeader
+          title={product.name}
+          actions={
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {archived && <span className="badge badge-neutral">Archived</span>}
+              {product.archivedAt === null && product.stock <= 0 && (
+                <span className="badge badge-warning">Out of stock</span>
+              )}
+              {archived ? (
+                <Link to="/" className="btn btn-secondary">
+                  Browse catalog
+                </Link>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Edit"
+                    onClick={() => setEditing(true)}
+                    className="btn btn-secondary"
+                  >
+                    <PencilIcon />
+                    <span className="btn-label">Edit</span>
+                  </button>
+                  <ArchiveButton
+                    product={product}
+                    variant="outline"
+                    onArchived={(archivedProduct) => {
+                      void queryClient.invalidateQueries({
+                        queryKey: ["product", archivedProduct.id],
+                      });
+                      void queryClient.invalidateQueries({ queryKey: ["products"] });
+                      setNotice("Product archived.");
+                    }}
+                  />
+                </>
+              )}
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmingArchive(true)}
-              className="mt-2 rounded border border-red-300 px-3 py-1 text-sm text-red-700"
-            >
-              Archive product
-            </button>
-          )
-        ) : (
-          <p className="mt-1 text-sm text-slate-600">
-            This product is archived and cannot be purchased.
-          </p>
-        )}
-        {archive.isError && (
-          <p role="alert" className="mt-2 text-sm text-red-700">
-            Archive failed. The product may already be archived.
-          </p>
-        )}
-        {archive.isSuccess && (
-          <p role="status" className="mt-2 text-sm text-green-700">
-            Product archived.
-          </p>
-        )}
+          }
+        />
       </div>
-    </section>
+
+      {notice !== null && (
+        <p role="status" className="alert alert-success mt-6">
+          {notice}
+        </p>
+      )}
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <div className="card p-5">
+          <dl className="definition-list">
+            <dt className="font-medium text-slate-600">SKU</dt>
+            <dd>{product.sku}</dd>
+            <dt className="font-medium text-slate-600">Category</dt>
+            <dd>{product.category}</dd>
+            <dt className="font-medium text-slate-600">Price</dt>
+            <dd className="font-semibold text-slate-900">{formatMoney(product.price)}</dd>
+            <dt className="font-medium text-slate-600">Stock</dt>
+            <dd>{product.stock}</dd>
+            <dt className="font-medium text-slate-600">Weight</dt>
+            <dd>{formatWeight(product.weightKg)}</dd>
+          </dl>
+        </div>
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-slate-900">Description</h3>
+          <p className="mt-2 text-sm text-slate-700">
+            {product.description === "" ? "No description." : product.description}
+          </p>
+          {archived && (
+            <p className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-500">
+              This product is archived: it stays in order history but cannot be purchased or edited.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {editing && (
+        <ProductFormModal
+          mode="edit"
+          productId={product.id}
+          onClose={() => setEditing(false)}
+          onSaved={(updated) => {
+            void queryClient.invalidateQueries({ queryKey: ["product", updated.id] });
+            void queryClient.invalidateQueries({ queryKey: ["products"] });
+            setEditing(false);
+            setNotice(`Updated ${updated.name}.`);
+          }}
+        />
+      )}
+    </Page>
   );
 }

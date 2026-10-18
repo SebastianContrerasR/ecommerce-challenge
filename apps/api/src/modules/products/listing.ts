@@ -15,6 +15,7 @@ export interface RawListQuery {
   page?: string;
   pageSize?: string;
   includeArchived?: string;
+  inStock?: string;
 }
 
 export interface ParsedListQuery {
@@ -25,6 +26,7 @@ export interface ParsedListQuery {
   page: number;
   pageSize: number;
   includeArchived: boolean;
+  inStock: boolean;
 }
 
 function isSortField(value: string): value is ProductSortField {
@@ -62,7 +64,7 @@ function parsePageSize(raw: string | undefined): number {
   return parsed;
 }
 
-function parseIncludeArchived(raw: string | undefined): boolean {
+function parseBooleanFlag(name: string, raw: string | undefined): boolean {
   if (raw === undefined || raw === "") {
     return false;
   }
@@ -72,9 +74,7 @@ function parseIncludeArchived(raw: string | undefined): boolean {
   if (raw === "false") {
     return false;
   }
-  throw new ProductServiceError("INVALID_QUERY", 400, `Invalid includeArchived: ${raw}`, {
-    includeArchived: raw,
-  });
+  throw new ProductServiceError("INVALID_QUERY", 400, `Invalid ${name}: ${raw}`, { [name]: raw });
 }
 
 export function parseListQuery(raw: RawListQuery): ParsedListQuery {
@@ -100,6 +100,7 @@ export function parseListQuery(raw: RawListQuery): ParsedListQuery {
     order: orderRaw,
     page: parsePage(raw.page),
     pageSize: parsePageSize(raw.pageSize),
-    includeArchived: parseIncludeArchived(raw.includeArchived),
+    includeArchived: parseBooleanFlag("includeArchived", raw.includeArchived),
+    inStock: parseBooleanFlag("inStock", raw.inStock),
   };
 }

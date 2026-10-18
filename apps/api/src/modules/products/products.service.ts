@@ -106,6 +106,9 @@ export async function listProducts(
   if (!query.includeArchived) {
     where.archivedAt = null;
   }
+  if (query.inStock) {
+    where.stock = { gt: 0 };
+  }
   if (conditions.length > 0) {
     where.AND = conditions;
   }

@@ -7,23 +7,16 @@ export function getApiBaseUrl(): string {
 }
 
 export interface ApiStatus {
-  live: unknown;
-  ready: unknown;
   error: string | null;
 }
 
 export async function fetchApiStatus(baseUrl: string): Promise<ApiStatus> {
   try {
-    const [liveResponse, readyResponse] = await Promise.all([
-      fetch(`${baseUrl}/live`),
-      fetch(`${baseUrl}/ready`),
-    ]);
-    const live = await liveResponse.json();
-    const ready = await readyResponse.json();
-    return { live, ready, error: null };
+    await Promise.all([fetch(`${baseUrl}/live`), fetch(`${baseUrl}/ready`)]);
+    return { error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return { live: null, ready: null, error: message };
+    return { error: message };
   }
 }
 
