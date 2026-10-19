@@ -132,6 +132,39 @@ describe("product csv import", () => {
     expect(await prisma.product.count()).toBe(0);
   });
 
+  it("imports the companion happy-path file in one transaction", async () => {
+    const content = readFileSync(new URL("../../../../docs/example-valid.csv", import.meta.url));
+    const response = await uploadCsv(app, "example-valid.csv", content);
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({
+      totalRecords: 12,
+      validRecords: 12,
+      errorCount: 0,
+      created: 12,
+      errors: [],
+    });
+    expect(await prisma.product.count()).toBe(12);
+
+    const stored = await prisma.product.findUnique({ where: { sku: "HP-003" } });
+    expect(stored?.name).toBe('Mechanical Keyboard "Aurora" 75%');
+    expect(stored?.price.toFixed(2)).toBe("149.99");
+    expect(stored?.weightKg.toFixed(3)).toBe("0.850");
+    expect(stored?.category).toBe("Electronics");
+  });
+
+  it("refuses to overwrite when the happy-path file is imported twice", async () => {
+    const content = readFileSync(new URL("../../../../docs/example-valid.csv", import.meta.url));
+    expect((await uploadCsv(app, "example-valid.csv", content)).statusCode).toBe(201);
+
+    const second = await uploadCsv(app, "example-valid.csv", content);
+    expect(second.statusCode).toBe(422);
+    const summary = second.json() as ImportSummaryJson;
+    expect(summary.created).toBe(0);
+    expect(summary.errorCount).toBe(12);
+    expect(new Set(summary.errors.map((error) => error.code))).toEqual(new Set(["SKU_EXISTS"]));
+    expect(await prisma.product.count()).toBe(12);
+  });
+
   it("rejects SKUs already stored without creating the valid rows", async () => {
     await app.inject({
       method: "POST",

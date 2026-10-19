@@ -1,0 +1,13 @@
+name,sku,description,category,price,stock,weight_kg
+Trail Running Shoes,HP-001,Lightweight trail shoes with a rock plate,Footwear,129.99,80,0.620
+"Espresso Machine, Compact",HP-002,"Semi-automatic, 15 bar pump, milk frother",Kitchen,349.00,25,8.400
+"Mechanical Keyboard ""Aurora"" 75%",HP-003,"Hot-swappable switches, wireless + USB-C",Electronics,149.99,60,0.850
+Organic Green Tea — Sencha 100g,HP-004,"Loose leaf, lightly steamed, 50 bags",Food & Beverage,12.50,240,0.100
+Yoga Mat,HP-005,,Sports,39.00,120,1.200
+Limited Edition Enamel Mug 🫖,HP-006,"Hand-painted, 350ml, dishwasher safe",Home & Office,18.75,90,0.350
+Wireless Earbuds Pro,HP-007,"Active noise cancelling, wireless charging case, 32hr battery",Electronics,199.00,75,0.060
+Graphene Racing Towel,HP-008,"Microfiber, quick-dry, zip pocket, 50x80cm",Sports,24.99,200,0.180
+Starter Kit (Bundle),HP-009,"Includes 3 cables and a 30W USB-C adapter",Electronics,0.00,500,0.450
+Discontinued Model,HP-010,Kept for spare parts,Electronics,9.99,0,0.300
+Ökologisch Aufbewahrungsbox,HP-011,"Bamboo storage box, 20L capacity, stackable",Home & Office,27.50,40,1.800
+"Cable, USB-C to USB-A",HP-012,Braided 1m 60W charging cable,Electronics,7.99,900,0.050

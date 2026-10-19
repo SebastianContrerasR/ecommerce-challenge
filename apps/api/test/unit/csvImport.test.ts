@@ -218,4 +218,23 @@ describe("parseImportCsv", () => {
     expect(names.get("SQL-001")).toBe("Robert'); DROP TABLE products;--");
     expect(names.has("WS-001")).toBe(false);
   });
+
+  it("parses the companion happy-path file without a single error", () => {
+    const parsed = parseImportCsv(fixture("../../../../../docs/example-valid.csv"));
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.totalRecords).toBe(12);
+    expect(parsed.validRows.length).toBe(12);
+
+    const bySku = new Map(parsed.validRows.map((row) => [row.sku, row]));
+    expect(bySku.get("HP-002")?.name).toBe("Espresso Machine, Compact");
+    expect(bySku.get("HP-003")?.name).toBe('Mechanical Keyboard "Aurora" 75%');
+    expect(bySku.get("HP-004")?.name).toBe("Organic Green Tea — Sencha 100g");
+    expect(bySku.get("HP-006")?.name).toBe("Limited Edition Enamel Mug 🫖");
+    expect(bySku.get("HP-011")?.name).toBe("Ökologisch Aufbewahrungsbox");
+    expect(bySku.get("HP-012")?.description).toBe("Braided 1m 60W charging cable");
+    expect(bySku.get("HP-005")?.description).toBe("");
+    expect(bySku.get("HP-009")?.price).toBe("0.00");
+    expect(bySku.get("HP-010")?.stock).toBe(0);
+    expect(bySku.get("HP-001")?.weightKg).toBe("0.620");
+  });
 });

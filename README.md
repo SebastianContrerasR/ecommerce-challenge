@@ -1,286 +1,98 @@
 # Ecommerce Challenge
 
-A maintainable, production-minded e-commerce application: product catalog with search and management, all-or-nothing CSV product import, and purchases with a fake payment provider, atomic inventory updates, and persistent idempotency keys. The backend is a modular Fastify monolith, the frontend is a React single-page storefront, and PostgreSQL is the system of record. No mock data or hardcoded products are used in the normal application workflow.
+Product catalog with search and management, all-or-nothing CSV import, and checkout with a fake payment provider, atomic stock decrements, and durable idempotency keys. Fastify modular monolith + React SPA + PostgreSQL; no mock data in the normal workflow.
 
-## Table of contents
+## Example CSV
 
-1. [Project overview and features](#1-project-overview-and-features)
-2. [Architecture](#2-architecture)
-3. [Monorepo structure](#3-monorepo-structure)
-4. [Technology choices](#4-technology-choices)
-5. [Alternatives considered](#5-alternatives-considered)
-6. [Database schema and migrations](#6-database-schema-and-migrations)
-7. [API endpoints and OpenAPI documentation](#7-api-endpoints-and-openapi-documentation)
-8. [CSV import](#8-csv-product-import)
-9. [Purchase flow, fake payments, and idempotency](#9-purchase-flow-fake-payments-and-idempotency)
-10. [Configuration](#10-configuration)
-11. [Prerequisites and local development](#11-prerequisites-and-local-development)
-12. [Running with Docker Compose](#12-running-with-docker-compose)
-13. [Database initialization and demo data](#13-database-initialization-and-demo-data)
-14. [Tests](#14-tests)
-15. [Formatting, linting, type checking, and builds](#15-formatting-linting-type-checking-and-builds)
-16. [Continuous integration](#16-continuous-integration)
-17. [Security assumptions and non-goals](#17-security-assumptions-and-non-goals)
-18. [Known limitations and future work](#18-known-limitations-and-future-work)
+Obtained **2026-10-16**
 
-## 1. Project overview and features
+## Run it locally
 
-- **Product catalog**: create, read, update, and archive products; case-insensitive search across name, SKU, description, and category; multi-field sorting; bounded pagination; archived and out-of-stock badges. The catalog hides unavailable products by default — `inStock=true` and `includeArchived=false` are both applied in SQL, so pagination counts stay truthful — and both filters are visible, reversible checkboxes.
-- **CSV product import**: multipart upload with strict parsing (BOM, CRLF, quoted delimiters, escaped quotes, embedded newlines), per-row structured errors, and all-or-nothing persistence. Existing SKUs are never overwritten.
-- **Purchasing and orders**: cart with live stock revalidation, server-computed totals, fake payment with distinct success/decline handling, atomic inventory decrement guarded by the database, full rollback on any failure, and durable order detail pages.
-- **Idempotency**: the `Idempotency-Key` request header makes order creation safe to retry; identical requests replay the stored response, differing requests are rejected, and concurrent duplicates collapse to a single order.
-- **Storefront**: the catalog is the workspace — cards only buy (quantity plus add-to-cart), and every write surface is either a modal over the grid (create, CSV import, archive confirmation, cart drawer) or the product detail page, whose title row carries the icon-bearing Edit and Archive actions. Modals own field-level errors, a styled file picker, and a nested modal error report (per-record table plus a downloadable `errors.csv`); checkout keeps its idempotency keys and order confirmation. Everything is semantic and keyboard-navigable with loading, empty, and error states, and every action has a hand-built inline icon.
-
-## 2. Architecture
-
-```mermaid
-flowchart LR
-    User([Browser]) -->|":5173"| Web["web container\nnginx + React SPA"]
-    User -->|":3000"| API["api container\nFastify modular monolith"]
-    Web -->|"VITE_API_URL<br/>(browser-reachable)"| API
-    API -->|"Prisma + @prisma/adapter-pg<br/>TCP :5432"| DB[("PostgreSQL 16\npersistent volume")]
-    Contracts["packages/api-contracts<br/>TypeBox schemas + types"] -. "single source of truth" .-> API
-    Contracts -. "single source of truth" .-> Web
-    API -->|"migrate deploy on boot<br/>after pg_isready"| DB
-```
-
-Request flow: browser -> `VITE_API_URL` -> Fastify validation -> thin handler -> service module (injected `PrismaClient`, pure helpers for SKU handling, listing, purchasability, and money math) -> PostgreSQL. CSV import flow: multipart upload -> pure parse and row validation with `csv-parse` (no database access) -> single bulk SKU existence lookup -> one transactional `createMany`, or no writes at all. Storefront flow: TanStack Query for server state (`products`, `product`, `order` keys), a `localStorage`-persisted cart kept strictly separate, and checkout `POST /api/orders` with a caller-generated idempotency key. Liveness never touches the database; readiness runs `SELECT 1`.
-
-Every route renders inside a `Page` landmark that centers one content column, and the catalog, product detail, and order detail pages all share the `wide` column so navigating between them never changes the frame. Loading, error, and empty states live in the same column. Visual primitives — `btn` (`primary`/`secondary`/`danger`/`ghost`), `input`, `card`, `badge`, `alert`, `empty-state` — are Tailwind component classes declared once in `apps/web/src/index.css`; pages compose those instead of hand-rolling utilities. Icons are hand-built inline SVG components in `apps/web/src/components/icons.tsx` (`aria-hidden`, currentColor) so no icon dependency is needed. Every icon-bearing button keeps its label in a `btn-label` span that is hidden below the `sm` breakpoint, so the button collapses to its icon on phones while an `aria-label` preserves its accessible name at every width.
-
-Create, import, archive, and the cart live in `apps/web/src/components/` as one implementation each, opened from the catalog, the product detail page, or the header. `Modal` owns the shared dialog behavior — `role="dialog"` + `aria-modal`, focus moved in on open and restored to the trigger on close, a Tab loop, Escape/backdrop dismissal, and body scroll locking — and takes a `placement`, so the cart uses `placement="right"` as a slide-in drawer over the catalog while confirmations stay centered. Nested dialogs (the import error report over the import modal) therefore behave like one stack. Routes are only real pages — `/`, `/products/:id`, `/orders/:id` — and any other path redirects to `/`; modal state is never addressed by URL. Because `/products/:id` would otherwise swallow `/products/new`, both detail pages reject a non-UUID `:id` and redirect to the catalog instead of rendering a failed fetch.
-
-The backend is one Fastify deployable with internal domain modules (`products`, `import`, `orders`, `payments`). No brokers, queues, or extra microservices: nothing in the requirements needs independent scaling or asynchronous processing at the documented sync limits.
-
-## 3. Monorepo structure
-
-```text
-.
-├── apps/
-│   ├── api/                    # Fastify modular monolith (TypeScript, strict)
-│   │   ├── prisma/
-│   │   │   ├── schema.prisma
-│   │   │   ├── prisma.config.ts
-│   │   │   └── migrations/     # versioned migrations + migration_lock.toml
-│   │   └── src/
-│   │       ├── app.ts          # plugin + route registration
-│   │       ├── server.ts       # listen + SIGTERM/SIGINT shutdown
-│   │       ├── config.ts       # env validation (DATABASE_URL required)
-│   │       ├── db/client.ts    # Prisma singleton (pg adapter)
-│   │       ├── plugins/        # errors, openapi
-│   │       ├── routes/         # /live, /ready, /health
-│   │       ├── modules/products/
-│   │       ├── modules/import/
-│   │       ├── modules/orders/
-│   │       └── modules/payments/  # PaymentProvider + FakePaymentProvider
-│   └── web/                    # React 19 + Vite 8 SPA (TypeScript, strict)
-│       └── src/
-│           ├── api/            # typed fetch clients (products, orders, import)
-│           ├── cart/           # localStorage cart state (pure helpers + context)
-│           ├── components/     # Page/PageHeader/EmptyState/SectionHeading,
-│           │                   # Modal, ProductFormModal, ImportModal,
-│           │                   # CartDrawer, ArchiveButton, icons
-│           ├── pages/          # Catalog, ProductDetail, OrderDetail,
-│           │                   # ImportErrorDialog (+ colocated component tests)
-│           ├── format.ts       # display-only money/weight/byte formatting
-│           └── routes.tsx      # /, /products/new, /products/:id,
-│                               # /products/:id/edit, /import, /cart, /orders/:id
-│                               # (the three write routes render the catalog
-│                               #  with the matching modal already open)
-├── packages/
-│   ├── api-contracts/          # TypeBox schemas + inferred types only
-│   └── tsconfig/               # shared strict base config
-├── e2e/                        # Playwright critical-flow specs (chromium)
-├── docs/example.csv            # large mixed-validity CSV used by tests
-├── docker-compose.yml          # db + api + web, healthchecks, named volume
-└── .github/workflows/ci.yml    # lint, typecheck, unit, integration, build, e2e
-```
-
-## 4. Technology choices
-
-| Choice                                                                                                                 | Why                                                                                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| pnpm workspaces                                                                                                        | One lockfile, isolated dependency trees, `workspace:*` links keep contracts in sync without publishing.                                                                                                                                                 |
-| TypeScript strict everywhere (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no `any` in hand-written code) | Contracts, services, and UI share exact types; mismatches fail at build time instead of at runtime.                                                                                                                                                     |
-| Fastify + TypeBox (`@fastify/type-provider-typebox`)                                                                   | One schema validates input, types the handler, and generates OpenAPI — no parallel Zod/JSON-schema definitions to drift.                                                                                                                                |
-| Prisma 7 + `@prisma/adapter-pg` + PostgreSQL 16                                                                        | Versioned migrations, typed client, and real database constraints (`UNIQUE`, `CHECK`, `RESTRICT`) as the final authority under concurrency. Raw SQL is used only where Prisma cannot express the operation (conditional stock decrement).               |
-| `csv-parse` in strict mode                                                                                             | Battle-tested CSV grammar (BOM, CRLF, quoted delimiters, escaped quotes, embedded newlines) instead of hand-rolled splitting, which cannot handle those cases.                                                                                          |
-| `BigInt` integer-cent arithmetic                                                                                       | Exact monetary math without floating point and without adding a decimal library for a two-decimal currency.                                                                                                                                             |
-| TanStack Query 5                                                                                                       | Server state (fetch, cache, invalidate, retry) without hand-rolled fetching logic; the cart stays in a separate `localStorage`-backed context so client state never masquerades as server state.                                                        |
-| React Router 7, Tailwind CSS 4 (Vite plugin)                                                                           | Declarative routes for the seven storefront pages; utility styling without a component-framework dependency.                                                                                                                                            |
-| Vitest + Testing Library + jsdom; Playwright (chromium)                                                                | Fast unit tests for pure logic, real-PostgreSQL integration tests for transactions and concurrency, and browser tests for the critical flows (create → search, import → search, purchase → confirmation, insufficient stock, validation, import retry). |
-| Docker Compose (`postgres:16-alpine`, `node:22-alpine`, `nginx:1.27-alpine`)                                           | The whole system — database with health-gated migrations, API, and static frontend — starts reproducibly from one command.                                                                                                                              |
-| GitHub Actions                                                                                                         | Every push/PR runs lint, typecheck, unit, integration (real Postgres service), build, and e2e against the composed stack.                                                                                                                               |
-
-## 5. Alternatives considered
-
-- **Microservices / message broker / background workers**: rejected. One deployable with internal modules covers the required load; the CSV flow documents explicit sync limits (5 MiB / 10,000 records) and a concrete async follow-up instead of speculative infrastructure.
-- **Drizzle / Knex / raw SQL instead of Prisma**: rejected. Prisma migrations give reviewable, versioned schema evolution and the generated client keeps queries typed; raw SQL is still available for the one conditional update Prisma cannot express.
-- **Zod instead of TypeBox**: rejected. TypeBox schemas feed Fastify validation _and_ OpenAPI generation from a single definition; a second validation library would duplicate every contract.
-- **Redux/Zustand instead of TanStack Query**: rejected. Almost all client state is server state with TTL semantics (lists, details, import result); TanStack Query covers fetching, caching, and invalidation with less code, while the genuinely local cart lives in a tiny context.
-- **Server-side cart**: rejected. The challenge needs a purchase flow, not persistent carts across devices; a `localStorage` cart keeps the server stateless while the server revalidates everything at checkout.
-- **Stripe test mode instead of a fake provider**: rejected. No credentials, no network, and no external test-mode behavior may be baked into an offline-runnable submission; the `PaymentProvider` interface keeps the seam open for a real gateway later.
-- **tRPC/GraphQL instead of REST + OpenAPI**: rejected. Plain REST with generated OpenAPI is the most broadly reviewable contract and needs no extra client tooling.
-
-## 6. Database schema and migrations
-
-Tables (PostgreSQL 16, UUID primary keys, `NUMERIC(12,2)` money, `NUMERIC(10,3)` weights):
-
-- **`products`** — `name`, unique `sku` (stored trimmed + uppercased), `description`, `category`, `price`, `stock`, `weight_kg`, `created_at`, `updated_at`, nullable `archived_at`. `CHECK`s enforce nonnegative price/stock/weight and field-length bounds; `UNIQUE(sku)` is the duplicate-SKU backstop; indexes on `archived_at`, `category`, `created_at`.
-- **`orders`** — `status` (`PAID`), `payment_status` (`SUCCEEDED`) and `payment_reference` (`UNIQUE`), `total`, `created_at`; `CHECK(total >= 0)` plus status allow-lists.
-- **`order_items`** — snapshot of `product_sku`, `product_name`, `unit_price`, `quantity`, `line_total` per line; `order_id CASCADE`, `product_id RESTRICT` (products with orders cannot be hard-deleted); `CHECK(quantity > 0)`, nonnegative money.
-- **`idempotency_keys`** — `key` primary key, `requestHash` (SHA-256 of the normalized request), `responseStatus`, `responseBody` (`JSONB`), `created_at` (+ index); `CHECK` constrains status to 200–599.
-
-Migrations in `apps/api/prisma/migrations/` (`20251016000000_init` enables `pgcrypto`; `..._products`; `..._orders`) plus `migration_lock.toml`. Strategy: never `db push`; the API entrypoint waits for `pg_isready`, then runs `prisma migrate deploy` before starting; CI applies the same migrations against a real Postgres service.
-
-## 7. API endpoints and OpenAPI documentation
-
-Base URL `http://localhost:3000`. Interactive docs: Swagger UI at `/docs`, raw spec at `/openapi.json`. Every response carries an `x-request-id` header.
-
-| Method & path               | Purpose                                                                                                                       | Success                         | Notable errors                                                                                                             |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `GET /live`, `GET /health`  | Liveness (no DB touch)                                                                                                        | `200`                           | —                                                                                                                          |
-| `GET /ready`                | Readiness (`SELECT 1`)                                                                                                        | `200` / `503`                   | —                                                                                                                          |
-| `GET /api/products`         | Search, filter (`q`, `category`, `inStock`, `includeArchived`), sort allowlist, bounded pagination (`page`, `pageSize` ≤ 100) | `200` + `pagination`            | `400 INVALID_SORT/INVALID_PAGINATION/INVALID_QUERY`                                                                        |
-| `GET /api/products/:id`     | Product detail (includes archived)                                                                                            | `200` / `404 PRODUCT_NOT_FOUND` | `400` malformed id                                                                                                         |
-| `POST /api/products`        | Create (server generates id/timestamps; unknown fields rejected)                                                              | `201`                           | `400 VALIDATION_ERROR`, `409 SKU_EXISTS`                                                                                   |
-| `PATCH /api/products/:id`   | Partial update (archived products rejected)                                                                                   | `200`                           | `400`, `404`, `409 SKU_EXISTS/PRODUCT_ARCHIVED`                                                                            |
-| `DELETE /api/products/:id`  | Archive (never hard-deletes)                                                                                                  | `200` with `archivedAt`         | `404`, `409 PRODUCT_ARCHIVED`                                                                                              |
-| `POST /api/products/import` | Multipart CSV upload, field `file`                                                                                            | `201` summary                   | `400 IMPORT_MISSING_FILE`, `413 FILE_TOO_LARGE`, `409 IMPORT_CONFLICT`, `422` summary                                      |
-| `POST /api/orders`          | Checkout, requires `Idempotency-Key` header                                                                                   | `201` order                     | `400`, `402 PAYMENT_DECLINED`, `404 PRODUCT_NOT_FOUND`, `409 INSUFFICIENT_STOCK/PRODUCT_ARCHIVED/IDEMPOTENCY_KEY_CONFLICT` |
-| `GET /api/orders/:id`       | Order with snapshotted items                                                                                                  | `200` / `404 ORDER_NOT_FOUND`   | `400` malformed id                                                                                                         |
-
-All failures use the envelope `{ error: { code, message, details? } }` except CSV validation failures, which return the import summary shape so the UI can render per-record errors.
-
-## 8. CSV product import
-
-Fixture: `apps/api/test/fixtures/csv/challenge-example.csv`, containing exactly the supplied example:
-
-```csv
-name,sku,description,category,price,stock,weight_kg
-Running Shoes,RS-001,Lightweight running shoes for daily training,Footwear,89.99,150,0.35
-```
-
-Example CSV provenance: The example record was provided inline in the challenge description and reproduced in the project's test fixtures on 2026-10-16. No external downloadable CSV asset was available in the supplied materials, so no download date is claimed. If an original downloadable asset becomes available, replace this note with its actual download date and source.
-
-Validation rules: UTF-8 with optional BOM; LF and CRLF endings; quoted commas, escaped double quotes, and quoted multiline fields; header names trimmed and case-insensitive with order-independent columns; every expected column required exactly once (missing/duplicate/unexpected headers are row-`0` errors); entirely blank records ignored; field boundaries trimmed while descriptions keep interior spaces and newlines; empty descriptions allowed; SKU normalized exactly as in product creation; numerics validated with strict patterns (never `parseFloat`); money never touches binary floating point. `record` numbers are data-record ordinals excluding the header, not physical line numbers.
-
-Duplicates and atomicity: duplicate normalized SKUs within the file are reported (`DUPLICATE_SKU_IN_FILE`); a single bulk lookup detects SKUs already stored (`SKU_EXISTS`); everything is validated before any write, then committed in one transaction, so any failure leaves zero rows. Uniqueness is rechecked inside the write with the database constraint as final authority. Limits: 5 MiB per file and 10,000 data records. The fixture above is exercised by a unit test (exact parsed row), an integration test (201 summary plus persisted product read-back), and an end-to-end test (real file upload through the browser, tolerant of reruns: a repeat upload deterministically reports the `SKU_EXISTS` row error instead of duplicating).
-
-Frontend presentation: the import runs in a modal opened from the catalog; the file input is visually replaced by a `Choose CSV file` button, and the import action only appears once a file is selected. A rejected file (`422`) opens a second modal on top with the outcome totals and every returned error in a table — record (file-level problems are shown as `Header`), field, code, and the server's reason — plus a `Download errors.csv` export for large files. Dismissal by Escape, the backdrop, or the close buttons returns focus to the import action and leaves an inline banner with a `Review errors` button, so closing the report never discards the findings. After a successful import the catalog list refreshes and the new products are searchable.
-
-## 9. Purchase flow, fake payments, and idempotency
-
-Exact workflow, in order: validate input; normalize lines (sort by product id, merge duplicates by summing quantities) and hash the canonical form with SHA-256; replay or conflict on the persistent idempotency record; load products and re-verify purchasability; compute every line total and the order total from database prices with integer-cent `BigInt` arithmetic, so totals are exact and no rounding policy is needed; run the fake payment decision outside any transaction; then commit one database transaction containing all conditional stock decrements (`UPDATE products SET stock = stock - qty WHERE id AND stock >= qty`), the order and item rows, and the idempotency record — or roll everything back. A stock shortfall voids the fake charge and returns `409 INSUFFICIENT_STOCK` with no order and no inventory change.
-
-The fake provider (`PaymentProvider` interface with injectable `FakePaymentProvider`) is a local deterministic simulation: `succeed` mints `fake_pay_N` references, `decline` fails closed, and every charge and void is recorded for tests. No network calls happen inside transactions. This is not how a real gateway behaves: replacing the fake would require external authorization and capture, timeouts, webhook reconciliation, and compensation flows, because a database transaction cannot commit an external payment. Only completed attempts are stored for idempotency (`201` orders and `402` declines replay byte-identically); validation failures such as missing products or insufficient stock are never stored, so the same key stays safely retryable after fixing the cause. Concurrent requests sharing one key cannot duplicate orders: the loser's transaction hits the unique key constraint, voids its charge, and replays the winner.
-
-```sh
-curl -X POST http://localhost:3000/api/orders \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: 11111111-1111-1111-1111-111111111111' \
-  -d '{"items":[{"productId":"<uuid>","quantity":2}]}'
-```
-
-## 10. Configuration
-
-| Variable                                              | Used by            | Default                                                                                    | Purpose                                                       |
-| ----------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `DATABASE_URL`                                        | api, local tooling | _required_ (`postgresql://ecommerce:ecommerce@localhost:5432/ecommerce` in `.env.example`) | PostgreSQL connection string                                  |
-| `PORT` / `HOST`                                       | api                | `3000` / `0.0.0.0`                                                                         | API listen address                                            |
-| `LOG_LEVEL`                                           | api                | `info`                                                                                     | Pino log level                                                |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | compose db + api   | `ecommerce`                                                                                | Local database credentials                                    |
-| `POSTGRES_HOST_PORT`                                  | compose            | `5432`                                                                                     | Host port mapped to Postgres (set `5433` if occupied)         |
-| `VITE_API_URL`                                        | web build arg      | `http://localhost:3000`                                                                    | Browser-reachable API base URL (never a Compose service name) |
-| `PAYMENT_MODE`                                        | reserved           | `fake`                                                                                     | Placeholder for a future provider switch                      |
-| `E2E_WEB_URL` / `E2E_API_URL`                         | Playwright         | `http://localhost:5173` / `http://localhost:3000`                                          | E2E targets                                                   |
-
-Copy `.env.example` to `.env` for local work. `.env` is gitignored and never committed; Compose works without it because every variable has a safe default.
-
-## 11. Prerequisites and local development
-
-Prerequisites: Node 22, pnpm 10.14.0 (`corepack enable`), Docker + Compose.
-
-```sh
-cp .env.example .env
-pnpm install
-docker compose up -d db
-pnpm --filter api prisma:generate
-pnpm --filter api prisma:deploy
-pnpm dev:api     # Fastify with tsx watch on :3000
-pnpm dev:web     # Vite dev server on :5173
-```
-
-`pnpm install` also builds `@ecommerce/api-contracts` via a `postinstall` step, since the API and web typecheck and build against its `dist` output. `prisma:generate` accepts a dummy `DATABASE_URL` for codegen; `prisma:deploy` and the integration tests need a reachable one. If host port 5432 is taken, run Compose with `POSTGRES_HOST_PORT=5433` and point local `DATABASE_URL` at `localhost:5433`.
-
-## 12. Running with Docker Compose
+One command brings up the whole system:
 
 ```sh
 docker compose up --build
 ```
 
-- Frontend: http://localhost:5173 (nginx serving the production build)
-- API liveness: http://localhost:3000/live
-- API readiness: http://localhost:3000/ready
-- OpenAPI JSON: http://localhost:3000/openapi.json
-- Docs UI: http://localhost:3000/docs
+It builds three images and starts three containers. The API waits for PostgreSQL to report healthy, applies `prisma migrate deploy`, then serves; nginx serves the production build of the SPA.
 
-The API container waits for PostgreSQL to be healthy, runs `prisma migrate deploy`, then starts. The `db` service persists data in the `pgdata` volume across restarts.
+- **web** — http://localhost:5173 — open this in a browser
+- **api** — http://localhost:3000 — `/docs` for Swagger UI, `/openapi.json` for the spec
+- **db** — localhost:5432 — PostgreSQL 16, data in the `pgdata` volume
 
-## 13. Database initialization and demo data
-
-There is no seed script; migrations plus the API are the only writers. Initialize and load a demo product:
+Confirm it came up healthy:
 
 ```sh
-docker compose up -d db
-pnpm --filter api prisma:generate
-pnpm --filter api prisma:deploy
-curl -F "file=@apps/api/test/fixtures/csv/challenge-example.csv" http://localhost:3000/api/products/import
-curl -s "http://localhost:3000/api/products?q=RS-001"
+curl -s http://localhost:3000/ready  # {"status":"ok","database":"connected"}
 ```
 
-The first command creates the product (`201`, `created: 1`); repeating it deterministically returns the `SKU_EXISTS` row error instead of duplicating.
-
-## 14. Tests
-
-| Suite           | Command                                                                                                          | What it covers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| API unit        | `pnpm --filter api test:unit` (9 files, 56 tests)                                                                | Pure rules: CSV parsing edge cases (incl. the challenge fixture byte-for-byte), money math without floats, SKU normalization, idempotency hashing, fake-payment behaviors                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Web unit        | `pnpm --filter web test` (12 files, 114 tests)                                                                   | Cart clamping/accumulation/removal, display formatting (money, weight, bytes, relative and absolute timestamps), layout primitives (`Page` centering, header, section, empty state), `Modal` dialog semantics (focus in/out, Tab loop, Escape/backdrop/icon dismissal, scroll lock), product form modal (live per-field validation, submit-time focus-to-first-error, submit-once, SKU error mapping and clearing on edit, icon-only actions with stable accessible names, paired-field grid, in-input unit suffixes, load failure), import modal (conditional import action, `onImported` count, rejection → nested error dialog, banner review, same-file reselection, transport failure), product detail page (wide column, icon actions on the title row, edit modal round-trip, archive confirmation accept/cancel/Escape/failure, archived state, non-UUID redirect), order detail page (wide column, title-only header, payment/status badge tones, summary fields incl. total charged, relative timestamp with described tooltip, items paging, catalog back link, non-UUID redirect), cart drawer (right placement, empty state, idempotent retry, decline handling), and catalog stock/archived filter defaults |
-| API integration | `DATABASE_URL=... pnpm test:integration` (6 files, 46 tests, real PostgreSQL via `vitest.integration.config.ts`) | CRUD, search/pagination boundaries, archived-product rules, `inStock` stock filtering, import summary + zero-write failures + persistence-conflict rollback, checkout totals/snapshots, insufficient-stock atomicity, payment decline + replay, idempotency replay/conflict/retries, **concurrent oversell and shared-key races**, DB-constraint checks, OpenAPI shape                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| E2E             | `pnpm e2e` (4 files, 18 tests, chromium)                                                                         | Health/connectivity (real `/ready` + `/api/products` responses), create → search through the create modal, live typing validation + paired/stacked product form fields, unit suffixes inside the price/weight inputs, duplicate-SKU errors, out-of-stock hidden until the filter is cleared, edit + archive from the detail page, CSV upload → catalog refresh, invalid-file error dialog + retry, fixture import, purchase → confirmation → order detail incl. hovered timestamp tooltip and phone-width stacked item rows, cart drawer without layout shift, pointer cursors on buttons, icon-only buttons plus full-width stacked filters on phone widths, inventory conflict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-
-`pnpm test:unit` runs the API and web suites; `pnpm test` runs every workspace suite. E2E expects the Compose stack on `http://localhost:5173` + `http://localhost:3000` (override with `E2E_WEB_URL` / `E2E_API_URL`).
-
-## 15. Formatting, linting, type checking, and builds
+Then try it: create or edit a product, import a CSV, add something to the cart and check out. Everything the API accepts is documented at `/docs`. When you are done:
 
 ```sh
-pnpm format       # prettier --check .
-pnpm format:write # apply formatting
-pnpm lint         # eslint . (zero warnings allowed)
-pnpm typecheck    # tsc --noEmit across all workspaces
-pnpm build        # contracts + api + web production builds
+docker compose down -v               # stop; -v also discards the database volume
 ```
 
-TypeScript is strict (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, no `any` in hand-written code); the only `as` casts are JSON-boundary or generated-client typings covered by round-trip/replay tests.
+## Decisions, approach, alternatives
 
-## 16. Continuous integration
+| Decision                                                       | Rejected alternative                        | Why                                                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| One deployable, no broker                                      | Microservices, Kafka/queue workers          | Nothing needs independent scaling at the documented limits (5 MiB / 10k records); async follow-up documented instead |
+| Conditional `UPDATE … WHERE stock >= qty`                      | Read-then-write, or `SELECT … FOR UPDATE`   | The affected-row count _is_ the verdict; one round trip, no decision gap                                             |
+| Payment outside the transaction                                | Charge inside the transaction               | Never hold a transaction open across a network call                                                                  |
+| `Idempotency-Key` in Postgres + SHA-256 of the normalized body | Redis cache, per-client keys                | Survives restarts; same key replays, different body is `409`                                                         |
+| `BigInt` integer cents, DB `NUMERIC(12,2)`                     | `decimal.js`, float arithmetic              | Exact with no float and no extra dependency                                                                          |
+| One TypeBox schema for validation, types, OpenAPI              | Zod, tRPC/GraphQL                           | A single source cannot drift from the spec                                                                           |
+| Pure parse + validate, then one transaction                    | Upsert, streaming import, background worker | Per-record errors, and a failed file writes nothing                                                                  |
+| Archive instead of delete                                      | Hard delete                                 | `OrderItem.productId` is `ON DELETE RESTRICT`; history must survive                                                  |
+| Prisma + raw SQL for the one guard                             | Drizzle/Knex, raw SQL throughout            | Reviewable versioned migrations, typed client, raw SQL still available                                               |
+| `localStorage` cart, fake provider                             | Server cart, Stripe test mode               | Stateless checkout; no credentials and no network in an offline submission                                           |
 
-`.github/workflows/ci.yml` runs on push and pull request: `lint` → `format` + `eslint`; `typecheck` (dummy DB URL for codegen); `unit` (`pnpm test:unit`); `integration` (real `postgres:16-alpine` service + `migrate deploy` + `pnpm test:integration`); `build` (needs lint/typecheck/unit: `prisma generate`, `pnpm build`, `docker compose build`); `e2e` (needs build + integration: installs Chromium, `docker compose up -d --build`, waits for `/live`, runs `pnpm e2e`, dumps logs on failure, always tears down).
+**Approach.** Schema first — invariants in the database, not only in application code. A pure domain core (`totals.ts`, `sku.ts`, `csvImport.ts`, `requestHash`) with `PrismaClient` and `PaymentProvider` injected at the edges, unit-tested without mocks. Correctness under concurrency designed before any UI. Three test tiers, each chosen for what it can prove: pure logic in Vitest, transactions and races against a **real PostgreSQL instance** (a mocked client cannot demonstrate row locks), Playwright only for critical browser flows. [`AGENTS.md`](AGENTS.md) holds the working agreement the code was written against, including "the database is authoritative". Written with AI assistance; per the challenge rules the source carries no comments (the only `//` in `apps/*/src` is Vite's `/// <reference>` directive), so correctness is carried by the tests.
 
-## 17. Security assumptions and non-goals
+**Questions that changed the design:**
 
-- **No authentication or authorization.** Anyone with network access can manage products, import, and order. Deliberate for a local challenge; a real deployment needs authN/authZ plus per-user idempotency scopes.
-- **Fake payments only.** No credentials, no network calls, no real money movement. Do not treat `paymentReference` as proof of external capture.
-- **Trust model:** single-tenant local deployment. CORS explicitly allows browser `PATCH`/`DELETE` (the plugin default only permits `GET,HEAD,POST`, which the edit/archive flows caught in E2E). No rate limiting; the 5 MiB upload cap and 100-line order cap bound the cheapest abuse vectors only.
-- **Secrets:** all secrets come from the environment; `.env` is gitignored and only `.env.example` (safe placeholders) is committed. Error responses never leak stacks; 5xx details stay server-side in logs with request ids (`x-request-id` on every response aids tracing without exposing internals).
-- **Client input:** validated at the API boundary with shared TypeBox schemas (`additionalProperties: false` rejects unknown fields); the database re-enforces every invariant that matters under concurrency.
+| Question                                            | Answer                                                                                                                                              |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Can two concurrent checkouts take the last unit?    | Not with read-then-write — hence one guarded `UPDATE` inside the transaction ([below](#how-it-works))                                               |
+| What if the charge succeeds and the DB write fails? | Every error path voids the charge, but a real gateway would authorize first and capture after commit, or reconcile by webhook on `paymentReference` |
+| Should an import overwrite an existing SKU?         | No — imports create only, so order history never changes retroactively                                                                              |
 
-## 18. Known limitations and future work
+## How it works
 
-- No order-history list endpoint (a placed order stays reachable through its confirmation link and detail page).
-- Import is synchronous within the documented limits; larger files need the background-job design noted in the CSV section (`202` + job id + polling).
-- Retrying a declined payment with the same idempotency key replays the `402` (executions are idempotent; use a new key for a genuinely new attempt).
-- E2E tests pollute the dev database by design (timestamped fixtures avoid collisions); integration tests clean their tables per file.
-- Swagger UI documents the import endpoint but cannot attach a file upload; use the curl command above or any multipart client with a `file` field.
-- Future work, if requirements demand it: authentication and roles, server-side carts, multi-currency and tax, refunds/cancellations, webhook-driven payment reconciliation, background import jobs, rate limiting, and non-root container users.
+Checkout, in order: validate → normalize lines and hash the canonical body → replay or conflict on the stored idempotency record → load products and re-verify purchasability → compute every line total and the total from database prices in integer cents → fake charge **outside** any transaction → one transaction:
+
+```sql
+UPDATE "products" SET "stock" = "stock" - $qty, "updated_at" = CURRENT_TIMESTAMP
+WHERE "id" = $id::uuid AND "stock" >= $qty;   -- rows = 0  =>  409 INSUFFICIENT_STOCK, full rollback
+```
+
+followed by the order, its item snapshots, and the idempotency row. A unique-collision (two requests sharing one key) voids the loser's charge and replays the winner's stored response. Never store client-supplied prices; the server recomputes every line.
+
+Other load-bearing choices: TypeBox validates the body, headers, params, and query at the boundary; failures use one envelope `{ "error": { code, message, details } }`; every response carries `x-request-id` and never a stack trace. The frontend is three routes (`/`, `/products/:id`, `/orders/:id`) — create, import, archive, and cart are modal/drawer surfaces rather than pages; the catalog, product-detail, and product-form actions carry hand-built inline SVG icons, and their labels collapse to the icon alone below `sm` while an `aria-label` keeps the accessible name at every width.
+
+## Project structure
+
+```
+apps/api          Fastify modular monolith — modules/products, import, orders, payments
+apps/web          React 19 + Vite SPA — pages, components, cart, api clients
+packages/api-contracts   TypeBox schemas + inferred types (single source for api and web)
+apps/api/prisma   schema.prisma + versioned migrations (never `db push`)
+e2e               Playwright specs (chromium)      docs/  the two example CSVs
+```
+
+## API and data model
+
+`GET/POST /api/products` · `GET/PATCH/DELETE /api/products/:id` · `POST /api/products/import` · `POST /api/orders` (requires `Idempotency-Key`) · `GET /api/orders/:id` · `/live` `/ready` `/health`. Spec at `/openapi.json`, UI at `/docs`.
+
+Tables: `products` (`NUMERIC(12,2)` price, `NUMERIC(10,3)` weight, `UNIQUE(sku)`, `CHECK`s on price/stock/weight and field lengths), `orders` (`UNIQUE(payment_reference)`), `order_items` (price/name snapshots, `CASCADE` on order, `RESTRICT` on product), `idempotency_keys` (key + hash + stored status/body). Money is a decimal string on the wire, `NUMERIC` in the database, `BigInt` cents in business logic.
+
+## Tests
+
+57 API unit + 114 web unit + 48 integration (real PostgreSQL) + 18 Playwright. The concurrency ones are the point:
+
+- `orders.test.ts` seeds `stock = 1`, fires concurrent checkouts with distinct keys, and asserts exactly one `201`, the rest `409`, and final `stock = 0`.
+- The same file proves two requests sharing one idempotency key produce one order with byte-identical responses, and that the stock guard holds when driven directly through SQL.
+
+## Security and known gaps
+
+No authN/authZ (deliberate for a local submission), no rate limiting, fake payments only — `paymentReference` is not proof of capture. Errors never leak stacks; secrets come from the environment; the browser may send `PATCH`/`DELETE`. Known gaps: no order-history list endpoint, synchronous import only within its limits, and the charge/DB gap described above. Each is revisited when a requirement appears, not in anticipation of one.
